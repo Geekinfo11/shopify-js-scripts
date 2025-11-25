@@ -36,6 +36,7 @@
     }
 
     // EXECUTION
+    console.log('tracking started ...');
     const gclidFromUrl = getGclidFromUrl();
 
     if (gclidFromUrl) {
