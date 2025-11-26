@@ -1,65 +1,80 @@
 (function () {
     const GCLID_KEY = 'gclid_value';
-    const COOKIE_NAME = 'gclid';
+    // Your backend endpoint
+    const BEACON_URL = 'https://836ebbbe83d3.ngrok-free.app/api/tracking/beacon'; 
 
-    // Get gclid from URL query
     function getGclidFromUrl() {
         return new URLSearchParams(window.location.search).get('gclid');
     }
 
-    // Save gclid in localStorage
     function saveGclid(gclid) {
-        if (!gclid) return;
-        localStorage.setItem(GCLID_KEY, gclid);
-        // Save as cookie too (for server-side access)
-        document.cookie = `${COOKIE_NAME}=${gclid}; path=/; max-age=${60*60*24*30}`;
+        if (gclid) localStorage.setItem(GCLID_KEY, gclid);
     }
 
-    // Get gclid from localStorage
     function getSavedGclid() {
         return localStorage.getItem(GCLID_KEY);
     }
 
-    // Attach gclid to cart attributes if cart exists
-    function attachGclidToCart(gclid) {
-        if (!gclid) return;
-
-        fetch('/cart/update.js', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                attributes: { gclid: gclid }
-            })
-        }).catch(console.error);
-    }
-
-    // Attempt to attach hidden input on checkout forms (best effort)
-    function ensureGclidOnCheckout(gclid) {
-        if (!gclid) return;
-
-        document.addEventListener('submit', function (e) {
-            const form = e.target;
-            if (form.action && form.action.includes('/checkout')) {
-                const input = document.createElement('input');
-                input.type = 'hidden';
-                input.name = 'attributes[gclid]';
-                input.value = gclid;
-                form.appendChild(input);
-            }
-        }, true);
-    }
-
-    const gclidFromUrl = getGclidFromUrl();
-
-    if (gclidFromUrl) {
-        saveGclid(gclidFromUrl);
-        attachGclidToCart(gclidFromUrl);
-        ensureGclidOnCheckout(gclidFromUrl);
-    } else {
-        const storedGclid = getSavedGclid();
-        if (storedGclid) {
-            attachGclidToCart(storedGclid);
-            ensureGclidOnCheckout(storedGclid);
+    // 1. Get the Shopify Cart Token (The "Bridge")
+    // This works even if the cart is empty.
+    async function getShopifyCartToken() {
+        try {
+            const response = await fetch('/cart.js');
+            const data = await response.json();
+            return data.token;
+        } catch (e) {
+            console.error('SaaS Tracker: Could not fetch cart token', e);
+            return null;
         }
+    }
+
+    // 2. Send the Map to your Backend
+    function sendBeacon(gclid, cartToken) {
+        if (!gclid || !cartToken) return;
+
+        // Use sendBeacon if available (more reliable on page unload)
+        const payload = JSON.stringify({
+            shop_domain: window.Shopify ? window.Shopify.shop : window.location.hostname,
+            gclid: gclid,
+            cart_token: cartToken
+        });
+
+        const blob = new Blob([payload], { type: 'application/json' });
+        
+        // Try Beacon API first (doesn't block main thread, works if tab closes)
+        if (navigator.sendBeacon) {
+            navigator.sendBeacon(BEACON_URL, blob);
+        } else {
+            // Fallback for older browsers
+            fetch(BEACON_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: payload,
+                keepalive: true
+            });
+        }
+    }
+
+    async function init() {
+        let gclid = getGclidFromUrl();
+        
+        if (gclid) {
+            saveGclid(gclid);
+        } else {
+            gclid = getSavedGclid();
+        }
+
+        if (gclid) {
+            const token = await getShopifyCartToken();
+            // Send immediately so we capture it before they click "Buy Now"
+            sendBeacon(gclid, token);
+        }
+    }
+
+    // Run on load
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
     }
 })();
