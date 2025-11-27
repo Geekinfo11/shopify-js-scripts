@@ -1,7 +1,7 @@
 (function () {
     const GCLID_KEY = 'gclid_value';
     // Your backend endpoint
-    const BEACON_URL = 'https://76337edf99d7.ngrok-free.app/api/tracking/beacon'; 
+    const BEACON_URL = 'https://76337edf99d7.ngrok-free.app/api/tracking/beacon';
 
     /** Utility Functions **/
     function getGclidFromUrl() {
@@ -26,15 +26,15 @@
             return null;
         }
     }
-    
+
     /** * SCENARIO 2 FIX: Inject GCLID into Cart ATTRIBUTES for 'Add to Cart' flow.
      * This resolves the "expected Hash to be a String: note" error.
      */
     async function injectGclidToCart(gclid) {
         // CORRECT PAYLOAD: Use 'attributes' (plural) for custom key/value data.
         const updatePayload = {
-            attributes: { 
-                gclid: gclid 
+            attributes: {
+                gclid: gclid
             },
         };
 
@@ -47,17 +47,16 @@
                 },
                 body: JSON.stringify(updatePayload)
             });
-            console.log('SaaS Tracker: GCLID injected into cart attributes.');
+            console.log('GCLID injected into cart attributes.');
         } catch (e) {
-            console.error('SaaS Tracker: Error during cart update for GCLID injection:', e);
+            console.error('Error during cart update for GCLID injection:', e);
         }
     }
-
 
     /** SCENARIO 1 & FALLBACK: Send GCLID/Cart Token Map to Backend **/
     function sendBeacon(gclid, cartToken) {
         if (!gclid || !cartToken) {
-            console.warn('SaaS Tracker: Beacon data missing (GCLID or Cart Token). Aborting send.');
+            console.warn('Beacon data missing (GCLID or Cart Token). Aborting send.');
             return;
         }
 
@@ -68,7 +67,7 @@
         });
 
         console.log('SaaS Tracker: Sending GCLID/Token beacon via consolidated fetch.');
-        
+
         fetch(BEACON_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -80,17 +79,13 @@
     /** Main Initialization **/
     async function init() {
         let gclid = getGclidFromUrl();
-        
-        if (gclid) {
-            saveGclid(gclid);
-        } else {
-            gclid = getSavedGclid();
-        }
 
         if (gclid) {
+            saveGclid(gclid);
+
             // 1. Inject GCLID into the cart attributes
             await injectGclidToCart(gclid);
-            
+
             // 2. Send the immediate map to the backend for direct checkout fallback
             const token = await getShopifyCartToken();
             sendBeacon(gclid, token);
