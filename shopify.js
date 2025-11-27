@@ -1,32 +1,21 @@
 (function () {
     const GCLID_KEY = 'gclid_value';
-    // Your backend endpoint for server-side GCLID/Cart Token mapping
+    // Your backend endpoint
     const BEACON_URL = 'https://76337edf99d7.ngrok-free.app/api/tracking/beacon'; 
 
-    /**
-     * Retrieves the GCLID from the URL query parameters.
-     */
+    /** Utility Functions **/
     function getGclidFromUrl() {
         return new URLSearchParams(window.location.search).get('gclid');
     }
 
-    /**
-     * Saves the GCLID to localStorage for persistence across pages/sessions.
-     */
     function saveGclid(gclid) {
         if (gclid) localStorage.setItem(GCLID_KEY, gclid);
     }
 
-    /**
-     * Retrieves the stored GCLID from localStorage.
-     */
     function getSavedGclid() {
         return localStorage.getItem(GCLID_KEY);
     }
 
-    /**
-     * Fetches the Shopify Cart Token (used as a session identifier).
-     */
     async function getShopifyCartToken() {
         try {
             const response = await fetch('/cart.js');
@@ -37,25 +26,20 @@
             return null;
         }
     }
-
-    /**
-     * ----------------------------------------------------
-     * SCENARIO 2 LOGIC: Inject GCLID into Cart Attributes
-     * This prepares the GCLID for "Add to Cart" checkout paths.
-     * ----------------------------------------------------
-     * Uses the Shopify Cart API to update the cart with the GCLID as a note_attribute.
+    
+    /** * SCENARIO 2 FIX: Inject GCLID into Cart ATTRIBUTES for 'Add to Cart' flow.
+     * This resolves the "expected Hash to be a String: note" error.
      */
     async function injectGclidToCart(gclid) {
-        // Prepare the data payload to update the cart notes
+        // CORRECT PAYLOAD: Use 'attributes' (plural) for custom key/value data.
         const updatePayload = {
-            note: {
-                gclid: gclid
+            attributes: { 
+                gclid: gclid 
             },
-            // Note: Shopify typically uses the /cart/update.js endpoint for this kind of attribute injection.
         };
 
         try {
-            const response = await fetch('/cart/update.js', {
+            await fetch('/cart/update.js', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -63,27 +47,19 @@
                 },
                 body: JSON.stringify(updatePayload)
             });
-            
-            if (response.ok) {
-                console.log('SaaS Tracker: GCLID successfully injected into cart attributes.');
-            } else {
-                console.warn('SaaS Tracker: Failed to inject GCLID into cart attributes.');
-            }
+            console.log('SaaS Tracker: GCLID injected into cart attributes.');
         } catch (e) {
             console.error('SaaS Tracker: Error during cart update for GCLID injection:', e);
         }
     }
 
 
-    /**
-     * ----------------------------------------------------
-     * SCENARIO 1 LOGIC: Send GCLID/Cart Token Map (Beacon)
-     * This prepares the GCLID for "Buy Now" checkout paths.
-     * ----------------------------------------------------
-     * Sends the GCLID-to-Cart-Token mapping to your backend for server-side matching.
-     */
+    /** SCENARIO 1 & FALLBACK: Send GCLID/Cart Token Map to Backend **/
     function sendBeacon(gclid, cartToken) {
-        if (!gclid || !cartToken) return;
+        if (!gclid || !cartToken) {
+            console.warn('SaaS Tracker: Beacon data missing (GCLID or Cart Token). Aborting send.');
+            return;
+        }
 
         const payload = JSON.stringify({
             shop_domain: window.Shopify ? window.Shopify.shop : window.location.hostname,
@@ -91,57 +67,37 @@
             cart_token: cartToken
         });
 
-        const blob = new Blob([payload], { type: 'application/json' });
+        console.log('SaaS Tracker: Sending GCLID/Token beacon via consolidated fetch.');
         
-        // Prefer sendBeacon for reliable, non-blocking transmission
-        if (navigator.sendBeacon) {
-            console.log('SaaS Tracker: Sending GCLID/Token beacon via navigator.sendBeacon.');
-            navigator.sendBeacon(BEACON_URL, blob);
-        } else {
-            // Fallback using non-blocking fetch with keepalive
-            console.log('SaaS Tracker: Sending GCLID/Token beacon via fetch fallback.');
-            fetch(BEACON_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: payload,
-                keepalive: true
-            });
-        }
+        fetch(BEACON_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: payload,
+            keepalive: true,
+        });
     }
 
-    /**
-     * Main initialization function
-     */
+    /** Main Initialization **/
     async function init() {
         let gclid = getGclidFromUrl();
         
-        // 1. Check URL for GCLID (if found, save it)
         if (gclid) {
             saveGclid(gclid);
         } else {
-            // 2. If not in URL, load the saved GCLID
             gclid = getSavedGclid();
         }
 
         if (gclid) {
-            // Both scenarios require the GCLID to be present:
-            
-            // --- SCENARIO 2 PREPARATION (Add to Cart) ---
-            // Inject GCLID into the cart notes immediately. This covers 
-            // the traditional checkout flow and makes the GCLID available 
-            // in the order's note_attributes field.
+            // 1. Inject GCLID into the cart attributes
             await injectGclidToCart(gclid);
-
-            // --- SCENARIO 1 PREPARATION (Buy Now / Direct) ---
-            // Fetch the current Cart Token and send the mapping to the backend.
-            // This is the fallback for when note_attributes aren't carried through 
-            // a direct checkout flow (i.e., when they skip the cart page).
+            
+            // 2. Send the immediate map to the backend for direct checkout fallback
             const token = await getShopifyCartToken();
             sendBeacon(gclid, token);
         }
     }
 
-    // Run initialization logic after the DOM is ready
+    // Run on load
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
     } else {
