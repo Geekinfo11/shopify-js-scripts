@@ -1,7 +1,7 @@
 (function () {
     const GCLID_KEY = 'gclid_value';
     // Your backend endpoint
-    const BEACON_URL = 'https://836ebbbe83d3.ngrok-free.app/api/tracking/beacon'; 
+    const BEACON_URL = 'https://76337edf99d7.ngrok-free.app/api/tracking/beacon'; 
 
     function getGclidFromUrl() {
         return new URLSearchParams(window.location.search).get('gclid');
