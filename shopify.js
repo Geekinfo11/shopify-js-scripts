@@ -21,7 +21,7 @@
 
     function isThankYouPage() {
         return window.location.pathname.includes('/checkouts/') &&
-            window.location.pathname.includes('/thank_you');
+            window.location.pathname.includes('/thank-you');
     }
 
     async function injectGclidToCart(gclid) {
