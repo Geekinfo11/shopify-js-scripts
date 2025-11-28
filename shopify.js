@@ -115,7 +115,9 @@
     }
 
     async function init() {
+        console.log('init called');
         if (isThankYouPage()) {
+            console.log('isThankYouPage called');
             runThankYouLogic();
         } else {
             runStorefrontLogic();
