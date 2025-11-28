@@ -1,98 +1,127 @@
 (function () {
+    
     const GCLID_KEY = 'gclid_value';
-    // Your backend endpoint
-    const BEACON_URL = 'https://76337edf99d7.ngrok-free.app/api/tracking/beacon';
+    const CONVERSION_URL = 'https://ab8a8470c017.ngrok-free.app/api/tracking/beacon';
+    const SESSION_CONFIRMED_KEY = 'conversion_confirmed';
 
-    /** Utility Functions **/
     function getGclidFromUrl() {
         return new URLSearchParams(window.location.search).get('gclid');
     }
 
     function saveGclid(gclid) {
-        if (gclid) localStorage.setItem(GCLID_KEY, gclid);
+        if (gclid) {
+            localStorage.setItem(GCLID_KEY, gclid);
+            console.log('Tracker: GCLID saved to localStorage.');
+        }
     }
 
     function getSavedGclid() {
         return localStorage.getItem(GCLID_KEY);
     }
 
-    async function getShopifyCartToken() {
-        try {
-            const response = await fetch('/cart.js');
-            const data = await response.json();
-            return data.token;
-        } catch (e) {
-            console.error('SaaS Tracker: Could not fetch cart token', e);
-            return null;
-        }
+    function isThankYouPage() {
+        return window.location.pathname.includes('/checkouts/') &&
+            window.location.pathname.includes('/thank_you');
     }
 
-    /** * SCENARIO 2 FIX: Inject GCLID into Cart ATTRIBUTES for 'Add to Cart' flow.
-     * This resolves the "expected Hash to be a String: note" error.
-     */
     async function injectGclidToCart(gclid) {
-        // CORRECT PAYLOAD: Use 'attributes' (plural) for custom key/value data.
         const updatePayload = {
-            attributes: {
-                gclid: gclid
-            },
+            attributes: { gclid: gclid },
         };
 
         try {
             await fetch('/cart/update.js', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json'
-                },
-                body: JSON.stringify(updatePayload)
+                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                body: JSON.stringify(updatePayload),
             });
-            console.log('GCLID injected into cart attributes.');
+            console.log('Tracker (Storefront): GCLID injected into cart attributes.');
         } catch (e) {
-            console.error('Error during cart update for GCLID injection:', e);
+            console.error('Tracker (Storefront): Error during cart update:', e);
         }
     }
+   
+    async function runStorefrontLogic() {
+        const gclid = getGclidFromUrl();
 
-    /** SCENARIO 1 & FALLBACK: Send GCLID/Cart Token Map to Backend **/
-    function sendBeacon(gclid, cartToken) {
-        if (!gclid || !cartToken) {
-            console.warn('Beacon data missing (GCLID or Cart Token). Aborting send.');
-            return;
+        if (gclid) {
+            console.log(`Tracker (Storefront): GCLID found in URL: ${gclid}`);
+
+            saveGclid(gclid);
+            
+            await injectGclidToCart(gclid);
+
+        } else {
+            console.log('Tracker (Storefront): No GCLID found in URL. Skipping save/injection.');
+        }
+    }
+ 
+    function getShopifyOrderId() {
+        if (window.Shopify && window.Shopify.checkout && window.Shopify.checkout.order_id) {
+            return window.Shopify.checkout.order_id;
         }
 
+        const orderName = document.querySelector('h2.os-header__title')?.innerText;
+        if (orderName && orderName.includes('#')) {
+            return orderName.trim().replace('Thank you', '').trim();
+        }
+
+        return 'UNKNOWN_ORDER_ID';
+    }
+
+    function sendConversionBeacon(gclid, orderId) {
         const payload = JSON.stringify({
             shop_domain: window.Shopify ? window.Shopify.shop : window.location.hostname,
             gclid: gclid,
-            cart_token: cartToken
+            order_id: orderId,
+            timestamp: new Date().toISOString()
         });
 
-        console.log('SaaS Tracker: Sending GCLID/Token beacon via consolidated fetch.');
+        console.log('Tracker (Thank You): Sending FINAL conversion beacon.');
 
-        fetch(BEACON_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: payload,
-            keepalive: true,
-        });
-    }
-
-    /** Main Initialization **/
-    async function init() {
-        let gclid = getGclidFromUrl();
-
-        if (gclid) {
-            saveGclid(gclid);
-
-            // 1. Inject GCLID into the cart attributes
-            await injectGclidToCart(gclid);
-
-            // 2. Send the immediate map to the backend for direct checkout fallback
-            const token = await getShopifyCartToken();
-            sendBeacon(gclid, token);
+        if (navigator.sendBeacon) {
+            navigator.sendBeacon(CONVERSION_URL, new Blob([payload], { type: 'application/json' }));
+        } else {
+            fetch(CONVERSION_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: payload,
+                keepalive: true,
+                credentials: 'omit',
+            });
         }
     }
 
-    // Run on load
+    function runThankYouLogic() {
+        const gclid = getSavedGclid();
+        const orderId = getShopifyOrderId();
+
+        if (gclid && orderId !== 'UNKNOWN_ORDER_ID' && sessionStorage.getItem(SESSION_CONFIRMED_KEY) !== 'true') {
+
+            console.log(`Tracker (Thank You): GCLID found: ${gclid}, Order ID: ${orderId}. Sending confirmation.`);
+
+            sendConversionBeacon(gclid, orderId);
+
+            localStorage.removeItem(GCLID_KEY);
+            console.log('Tracker (Thank You): GCLID processed and removed from storage.');
+
+            sessionStorage.setItem(SESSION_CONFIRMED_KEY, 'true');
+
+        } else if (gclid && sessionStorage.getItem(SESSION_CONFIRMED_KEY) === 'true') {
+            console.log('Tracker (Thank You): Conversion already confirmed in this session. Skipping beacon.');
+        } else {
+            console.log('Tracker (Thank You): GCLID or Order ID not available. Skipping conversion beacon.');
+        }
+    }
+
+    async function init() {
+        if (isThankYouPage()) {
+            runThankYouLogic();
+        } else {
+            runStorefrontLogic();
+        }
+    }
+
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
     } else {
