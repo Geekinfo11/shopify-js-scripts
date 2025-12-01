@@ -1,82 +1,37 @@
-(function () {
-    // --- Configuration ---
-    const GCLID_KEY = 'gclid_value';
-    // Use your final, secure endpoint
-    const CONVERSION_URL = 'https://ab8a8470c017.ngrok-free.app/api/tracking/beacon';
-    const SESSION_CONFIRMED_KEY = 'conversion_confirmed';
+export function register({ analytics, browser }) {
 
-    // --- Utility Functions ---
-    function getSavedGclid() {
-        return localStorage.getItem(GCLID_KEY);
-    }
+    analytics.subscribe("checkout_completed", async (event) => {
 
-    function getShopifyOrderId() {
-        // 1. Preferred method: Use the global Shopify.checkout object
-        if (window.Shopify && window.Shopify.checkout && window.Shopify.checkout.order_id) {
-            return window.Shopify.checkout.order_id;
-        }
+        console.log("Web Pixel: checkout_completed fired");
 
-        // 2. Fallback method: Attempt to scrape the order name from the header (less reliable)
-        const orderNameElement = document.querySelector('h2.os-header__title');
-        const orderNameText = orderNameElement ? orderNameElement.innerText : '';
-        if (orderNameText && orderNameText.includes('#')) {
-            // Example: "Thank you John. Your order #1234 has been placed."
-            const match = orderNameText.match(/#(\d+)/);
-            return match ? match[1] : 'UNKNOWN_ORDER_ID';
-        }
+        const checkout = event.data.checkout;
 
-        return 'UNKNOWN_ORDER_ID';
-    }
-
-    function sendConversionBeacon(gclid, orderId) {
-        // Use the domain provided by Shopify for the most accurate tracking
-        const shopDomain = window.Shopify ? window.Shopify.shop : window.location.hostname;
-
-        const payload = JSON.stringify({
-            shop_domain: shopDomain,
-            gclid: gclid,
-            order_id: orderId,
+        const payload = {
+            shop_domain: event.context.shop.domain,
+            order_id: checkout.order.id,
+            gclid: checkout.attributes?.gclid || null,
             timestamp: new Date().toISOString()
-        });
+        };
 
-        console.log('Tracker (Thank You): Sending FINAL conversion beacon.');
-
-        fetch(CONVERSION_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: payload,
-            keepalive: true,
-        });
-    }
-
-    // --- Main Thank You Page Logic ---
-    function runThankYouLogic() {
-        console.log('Thank You Tracker: Initializing...');
-        const gclid = getSavedGclid();
-        const orderId = getShopifyOrderId();
-
-        // Check if we have GCLID, a valid Order ID, and haven't confirmed in this session
-        if (gclid && orderId !== 'UNKNOWN_ORDER_ID' && sessionStorage.getItem(SESSION_CONFIRMED_KEY) !== 'true') {
-
-            console.log(`Tracker (Thank You): GCLID found: ${gclid}, Order ID: ${orderId}. Sending confirmation.`);
-
-            sendConversionBeacon(gclid, orderId);
-
-            // Clean up GCLID immediately after successful attempt
-            localStorage.removeItem(GCLID_KEY);
-            console.log('Tracker (Thank You): GCLID processed and removed from storage.');
-
-            // Prevent double-firing on page refresh
-            sessionStorage.setItem(SESSION_CONFIRMED_KEY, 'true');
-
-        } else if (gclid && sessionStorage.getItem(SESSION_CONFIRMED_KEY) === 'true') {
-            console.log('Tracker (Thank You): Conversion already confirmed in this session. Skipping beacon.');
-        } else {
-            console.log('Tracker (Thank You): GCLID or Order ID not available. Skipping conversion beacon.');
+        if (!payload.gclid) {
+            console.warn("Web Pixel: No gclid found in checkout attributes.");
         }
-    }
 
-    // Initialize script immediately. No need for DOMContentLoaded checks here
-    // because this script is injected in the Checkout settings, guaranteeing late execution.
-    runThankYouLogic();
-})();
+        try {
+            await fetch("https://bbe8cff3197c.ngrok-free.app/api/tracking/beacon", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(payload)
+            });
+
+            console.log("Web Pixel: Conversion beacon sent", payload);
+
+        } catch (e) {
+            console.error("Web Pixel: Failed to send beacon", e);
+        }
+
+    });
+
+}
